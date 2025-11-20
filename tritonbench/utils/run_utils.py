@@ -25,6 +25,7 @@ from tritonbench.utils.list_operator_details import list_operator_details
 from tritonbench.utils.parser import get_parser
 from tritonbench.utils.path_utils import (
     add_cmd_parameter,
+    get_cmd_parameter,
     remove_cmd_parameter,
     REPO_PATH,
 )
@@ -335,7 +336,7 @@ def run_one_operator(task_args: List[str], with_bwd: bool = False):
 
 
 def run_in_task(
-    op: Optional[str],
+    op: Optional[str] = None,
     op_args: Optional[List[str]] = None,
     benchmark_name: Optional[str] = None,
     extra_envs: Optional[Dict[str, str]] = None,
@@ -353,9 +354,12 @@ def run_in_task(
         if is_fbcode():
             op_task_cmd.append(sys.argv[0])
         op_task_cmd.extend(op_args)
+    if not op and op_args:
+        op = get_cmd_parameter(op_args, "--op")
     if benchmark_name:
         op_args.extend(["--benchmark-name", benchmark_name])
     else:
+        assert op, "If benchmark_name is none, op must not be None."
         benchmark_name = op
 
     # In OSS, we assume always using the run.py benchmark driver
