@@ -62,6 +62,8 @@ class Edge:
 
 
 def split_by_the_last_dot(s: str) -> Optional[Tuple[str, str]]:
+    if s == None:
+        return None, None
     if "." in s:
         return s.rsplit(".", 1)
     else:
