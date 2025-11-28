@@ -84,6 +84,8 @@ class BenchmarkOperatorBackend:
     # need to be tested in ci
     # ci = False implies enabled = False
     ci: bool = True
+    # tags for categorizing the backend (e.g., ['triton', 'pt2'])
+    tags: Optional[List[str]] = None
 
 
 REGISTERED_BENCHMARKS: Dict[str, OrderedDict[str, BenchmarkOperatorBackend]] = {}
@@ -602,6 +604,7 @@ def register_benchmark(
     enabled: bool = True,
     fwd_only: bool = False,
     label: Optional[str] = None,
+    tags: Optional[List[str]] = None,
 ):
     def decorator(function):
         op_name = (
@@ -616,6 +619,7 @@ def register_benchmark(
             baseline=baseline,
             enabled=enabled,
             fwd_only=fwd_only,
+            tags=tags,
         )
         if op_name not in REGISTERED_BENCHMARKS:
             REGISTERED_BENCHMARKS[op_name] = OrderedDict()
