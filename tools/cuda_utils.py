@@ -1,6 +1,7 @@
 import argparse
 import os
 import re
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -8,7 +9,9 @@ from .torch_utils import install_pytorch_nightly
 
 # defines the default CUDA version to compile against
 DEFAULT_CUDA_VERSION = "12.8"
+DEFAULT_HIP_VERSION = "7.0"
 
+# the key is the value of `torch.version.cuda`
 CUDA_VERSION_MAP = {
     "12.8": {
         "pytorch_url": "cu128",
@@ -16,6 +19,17 @@ CUDA_VERSION_MAP = {
     },
 }
 
+# the key is the value of `torch.version.hip`
+HIP_VERSION_MAP = {
+    "7.0": {
+        "pytorch_url": "rocm7.0",
+    }
+}
+
+IS_CUDA = bool(shutil.which("nvidia-smi") is not None) or bool(os.environ.get("CUDA_HOME", None))
+
+DEFAULT_TOOLKIT_VERSION = DEFAULT_CUDA_VERSION if IS_CUDA else DEFAULT_HIP_VERSION
+TOOLKIT_MAPPING = CUDA_VERSION_MAP if IS_CUDA else HIP_VERSION_MAP
 
 def detect_cuda_version_with_nvcc(env):
     test_nvcc = ["nvcc", "--version"]
@@ -93,12 +107,27 @@ def install_torch_deps():
     subprocess.check_call(cmd)
 
 
+def get_toolkit_version_from_torch(key="pytorch_url") -> str:
+    import torch
+
+    if torch.version.cuda:
+        return CUDA_VERSION_MAP[torch.version.cuda][key]
+    elif torch.version.hip:
+        hip_version_split = torch.version.hip.split(".")
+        if len(hip_version_split) < 2:
+            raise RuntimeError(f"Unexpected hip version {torch.version.hip}")
+        hip_version_truncated = hip_version_split[0] + "." + hip_version_split[1]
+        return HIP_VERSION_MAP[hip_version_truncated][key]
+    else:
+        raise RuntimeError("No CUDA or ROCm version found in torch version.")
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument(
-        "--cudaver",
-        default=DEFAULT_CUDA_VERSION,
-        help="Specify the default CUDA version",
+        "--toolkit-version",
+        default=DEFAULT_TOOLKIT_VERSION,
+        help="Specify the default CUDA/HIP version",
     )
     parser.add_argument(
         "--setup-cuda-softlink",
@@ -131,7 +160,8 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
     if args.setup_cuda_softlink:
-        setup_cuda_softlink(cuda_version=args.cudaver)
+        assert IS_CUDA, "Error: CUDA is not available on this machine."
+        setup_cuda_softlink(cuda_version=args.toolkit_version)
     if args.install_torch_deps:
         install_torch_deps()
     if args.install_torch_build_deps:
@@ -140,8 +170,8 @@ if __name__ == "__main__":
         install_torch_deps()
         install_torch_build_deps()
     if args.install_torch_nightly:
-        pytorch_cuda_version = CUDA_VERSION_MAP[args.cudaver]["pytorch_url"]
-        install_pytorch_nightly(cuda_version=pytorch_cuda_version, env=os.environ)
+        toolkit_version = TOOLKIT_MAPPING[args.toolkit_version]["pytorch_url"]
+        install_pytorch_nightly(toolkit_version=toolkit_version, env=os.environ)
     if args.check_torch_nightly_version:
         from .torch_utils import check_torch_nightly_version
 
