@@ -416,4 +416,7 @@ def get_parser(args=None):
             )
         if args.isolate:
             parser.error("A/B testing is not compatible with --isolate mode")
+
+    if args.metrics and "walltime_kineto_trace" in args.metrics and args.repcnt is None:
+        parser.error("Walltime Kineto trace requires --repcnt to be specified")
     return parser
