@@ -11,8 +11,8 @@ if [ -z "${SETUP_SCRIPT}" ]; then
 fi
 
 # Initialize workspace directory
-if [ -e "${WORKSPACE_DIR}" ]; then
-    rm -r "${WORKSPACE_DIR}"
+if [ -e "${WORKSPACE_DIR}/miniconda3" ]; then
+    rm -r "${WORKSPACE_DIR}/miniconda3"
 fi
 
 
@@ -27,8 +27,10 @@ while [[ "$#" -gt 0 ]]; do
 done
 
 
-sudo mkdir ${WORKSPACE_DIR}
-sudo chmod 777 ${WORKSPACE_DIR}
+if [ ! -e ${WORKSPACE_DIR} ]; then
+    sudo mkdir -p ${WORKSPACE_DIR}
+    sudo chown -R $(whoami):$(id -gn) ${WORKSPACE_DIR}
+fi
 
 bash ./.ci/conda/install.sh
 
@@ -46,6 +48,8 @@ export CONDA_ENV=pytorch
 python tools/python_utils.py --create-conda-env ${CONDA_ENV} && \
 echo "if [ -z \${CONDA_ENV} ]; then export CONDA_ENV=${CONDA_ENV}; fi" >> "${SETUP_SCRIPT}" && \
 echo "conda activate \${CONDA_ENV}" >> "${SETUP_SCRIPT}"
+
+. "${SETUP_SCRIPT}"
 
 python -m tools.cuda_utils --install-torch-deps
 
@@ -66,7 +70,6 @@ else
     echo "Unknown backend. Only CUDA and HIP are supported."
     exit 1
 fi
-
 
 bash .ci/tritonbench/install-pytorch-source.sh
 
