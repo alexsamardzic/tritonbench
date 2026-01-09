@@ -1,12 +1,13 @@
 import logging
 import os
-import shutil
 import subprocess
 import sys
 from pathlib import Path
 from typing import Dict, List, Optional
 
 DEFAULT_PYTHON_VERSION = "3.12"
+
+UV_VENV_DIR = os.getenv("UV_VENV_DIR", None)
 
 PYTHON_VERSION_MAP = {
     "3.11": {
@@ -23,8 +24,12 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
-def create_conda_env(pyver: str, name: str):
-    command = ["conda", "create", "-n", name, "-y", f"python={pyver}"]
+def create_venv(pyver: str, name: str):
+    if UV_VENV_DIR is not None:
+        # avoid using system python, use uv managed instead
+        command = ["uv", "venv", f"{UV_VENV_DIR}/{name}", "--python", pyver, "--managed-python", "--clear"]
+    else:
+        command = ["conda", "create", "-n", name, "-y", f"python={pyver}"]
     subprocess.check_call(command)
 
 
@@ -40,6 +45,8 @@ def get_pkg_versions(packages: List[str]) -> Dict[str, str]:
 def get_pip_cmd():
     if env := os.getenv("PIP_MODULE"):
         return env.split()
+    elif UV_VENV_DIR is not None:
+        return ["uv", "pip"]
     else:
         return [sys.executable, "-m", "pip"]
 
@@ -73,6 +80,7 @@ def pip_install_requirements(
     no_build_isolation=False,
     add_build_constraints=True,
     extra_args: Optional[List[str]] = None,
+    current_dir: Optional[Path] = None,
 ):
     import sys
 
@@ -99,11 +107,13 @@ def pip_install_requirements(
         install_cmd = get_pip_cmd()
         subprocess.check_call(
             install_cmd + ["install", "-r", requirements_txt] + constraints_parameters,
+            cwd=current_dir,
         )
         return True, None
     try:
         subprocess.run(
             install_cmd + ["install", "-r", requirements_txt] + constraints_parameters,
+            cwd=current_dir,
             check=True,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
@@ -129,8 +139,8 @@ if __name__ == "__main__":
         "--create-conda-env",
         type=str,
         default=None,
-        help="Create conda environment of the default Python version.",
+        help="Create virtual environment of the default Python version (conda or uv).",
     )
     args = parser.parse_args()
     if args.create_conda_env:
-        create_conda_env(args.pyver, args.create_conda_env)
+        create_venv(args.pyver, args.create_conda_env)

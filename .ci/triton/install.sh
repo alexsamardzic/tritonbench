@@ -13,9 +13,15 @@ remove_triton() {
     # delete the original triton directory
     TRITON_PKG_DIR=$(python -c "import triton; import os; print(os.path.dirname(triton.__file__))")
     # make sure all pytorch triton has been uninstalled
-    pip uninstall -y triton
-    pip uninstall -y triton
-    pip uninstall -y triton
+    if [ -n "${UV_VENV_DIR:-}" ]; then
+        uv pip uninstall triton
+        uv pip uninstall triton
+        uv pip uninstall triton
+    else
+        pip uninstall -y triton
+        pip uninstall -y triton
+        pip uninstall -y triton
+    fi
     rm -rf "${TRITON_PKG_DIR}"
 }
 
@@ -40,16 +46,40 @@ install_triton() {
     TRITON_INSTALL_DIR=$1
     cd "${TRITON_INSTALL_DIR}"
     # install main triton
-    pip install ninja cmake wheel pybind11; # build-time dependencies
-    pip install -r python/requirements.txt
-    # old versions of triton have setup.py in ./python; newer versions in ./
-    if [ ! -f setup.py ]; then
-      pushd python
+    if [ -n "${UV_VENV_DIR:-}" ]; then
+        uv pip install ninja cmake wheel pybind11; # build-time dependencies
+        uv pip install -r python/requirements.txt
+        uv pip install -e .
     else
-      pushd .
+        pip install ninja cmake wheel pybind11; # build-time dependencies
+        pip install -r python/requirements.txt
+        pip install -e .
     fi
-    pip install -e .
-    popd
+}
+
+remove_env() {
+    CONDA_ENV=$1
+    if [ -n "${UV_VENV_DIR:-}" ]; then
+        # uv
+        rm -r "${UV_VENV_DIR}/${CONDA_ENV}" || true 
+    else
+        # conda
+        conda remove --name "${CONDA_ENV}" -y --all || true
+    fi
+}
+
+clone_env() {
+    
+    DEST_CONDA_ENV=$1
+    SRC_CONDA_ENV=$2
+    if [ -n "${UV_VENV_DIR:-}" ]; then
+        cp -r "${UV_VENV_DIR}/${SRC_CONDA_ENV}" "${UV_VENV_DIR}/${DEST_CONDA_ENV}"
+        # replace the activate script to point to the new env
+        sed -i "s,${UV_VENV_DIR}/${SRC_CONDA_ENV},${UV_VENV_DIR}/${DEST_CONDA_ENV},g" "${UV_VENV_DIR}/${DEST_CONDA_ENV}/bin/activate"
+    else
+        # conda
+        conda create --name "${DEST_CONDA_ENV}" -y --clone "${SRC_CONDA_ENV}"
+    fi
 }
 
 # "NIGHTLY" option controls whether to truncate the branch
@@ -72,17 +102,18 @@ while [[ "$#" -gt 0 ]]; do
 done
 
 if [ -z "${WORKSPACE_DIR:-}" ]; then
-    export WORKSPACE_DIR=/workspace
+  echo "ERROR: WORKSPACE_DIR is not set"
+  exit 1
 fi
 
-if [ -z "${SETUP_SCRIPT}" ]; then
+if [ -z "${SETUP_SCRIPT:-}" ]; then
   echo "ERROR: SETUP_SCRIPT is not set"
   exit 1
 fi
 
 # Validate arguments
 if [ -z "${REPO}" ] || [ -z "${COMMIT}" ] || [ -z "${SIDE}" ]; then
-    echo "Missing required arguments."
+    echo "Missing required arguments: --repo , --commit , or --side."
     usage
 fi
 
@@ -102,8 +133,8 @@ fi
 
 CONDA_ENV=pytorch . "${SETUP_SCRIPT}"
 # Remove the conda env if exists
-conda remove --name "${CONDA_ENV}" -y --all || true
-conda create --name "${CONDA_ENV}" -y --clone pytorch
+remove_env "${CONDA_ENV}"
+clone_env "${CONDA_ENV}" pytorch
 
 . "${SETUP_SCRIPT}"
 
@@ -121,7 +152,7 @@ TRITONBENCH_TRITON_REPO=$(git config --get remote.origin.url | sed -E 's|.*githu
 # If the current conda env matches the env we just created
 # then export all Triton related envs to shell env
 cat <<EOF >> "${SETUP_SCRIPT}"
-if [ \${CONDA_DEFAULT_ENV} == "${CONDA_ENV}" ] ; then
+if [ \${CONDA_ENV} == "${CONDA_ENV}" ] ; then
     export TRITONBENCH_TRITON_COMMIT_HASH="${TRITONBENCH_TRITON_COMMIT_HASH}"
     export TRITONBENCH_TRITON_REPO="${TRITONBENCH_TRITON_REPO}"
     export TRITONBENCH_TRITON_COMMIT="${COMMIT}"

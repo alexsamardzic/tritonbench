@@ -3,16 +3,20 @@ CUDA/ROCM independent pytorch installation helpers.
 """
 
 import importlib
+import os
 import re
 import subprocess
 from pathlib import Path
 
 from typing import Optional
 
+from .python_utils import get_pip_cmd
+
 REPO_ROOT = Path(__file__).parent.parent.parent
 
 TORCH_NIGHTLY_PACKAGES = ["torch"]
 PIN_CMAKE_VERSION = "3.22.*"
+USE_UV = os.path.exists(os.getenv("VIRTUAL_ENV", ""))
 BUILD_REQUIREMENTS_FILE = REPO_ROOT.joinpath("utils", "build_requirements.txt")
 
 
@@ -77,7 +81,10 @@ def check_torch_nightly_version(force_date: Optional[str] = None):
 def install_pytorch_nightly(toolkit_version: str, env, dryrun=False):
     from .torch_utils import TORCH_NIGHTLY_PACKAGES
 
-    uninstall_torch_cmd = ["pip", "uninstall", "-y"]
+    install_cmd = get_pip_cmd()
+    uninstall_torch_cmd = install_cmd + ["uninstall"]
+    if not USE_UV:
+        uninstall_torch_cmd.extend(["-y"])
     uninstall_torch_cmd.extend(TORCH_NIGHTLY_PACKAGES)
     if dryrun:
         print(f"Uninstall pytorch: {uninstall_torch_cmd}")
@@ -86,7 +93,7 @@ def install_pytorch_nightly(toolkit_version: str, env, dryrun=False):
         for _loop in range(3):
             subprocess.check_call(uninstall_torch_cmd)
     pytorch_nightly_url = f"https://download.pytorch.org/whl/nightly/{toolkit_version}"
-    install_torch_cmd = ["pip", "install", "--pre", "--no-cache-dir"]
+    install_torch_cmd = install_cmd + ["install", "--pre", "--no-cache-dir"]
     install_torch_cmd.extend(TORCH_NIGHTLY_PACKAGES)
     install_torch_cmd.extend(["-i", pytorch_nightly_url])
     if dryrun:

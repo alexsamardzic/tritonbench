@@ -2,19 +2,13 @@
 
 set -xeuo pipefail
 
-if [ -z "${WORKSPACE_DIR}" ]; then
+if [ -z "${WORKSPACE_DIR:-}" ]; then
     export WORKSPACE_DIR=/workspace
 fi
 
-if [ -z "${SETUP_SCRIPT}" ]; then
+if [ -z "${SETUP_SCRIPT:-}" ]; then
     export SETUP_SCRIPT=${WORKSPACE_DIR}/setup_instance.sh
 fi
-
-# Initialize workspace directory
-if [ -e "${WORKSPACE_DIR}/miniconda3" ]; then
-    rm -r "${WORKSPACE_DIR}/miniconda3"
-fi
-
 
 # Parse arguments
 while [[ "$#" -gt 0 ]]; do
@@ -26,32 +20,33 @@ while [[ "$#" -gt 0 ]]; do
     shift
 done
 
-
 if [ ! -e ${WORKSPACE_DIR} ]; then
     sudo mkdir -p ${WORKSPACE_DIR}
     sudo chown -R $(whoami):$(id -gn) ${WORKSPACE_DIR}
 fi
-
-bash ./.ci/conda/install.sh
-
-echo "\
-. ${WORKSPACE_DIR}/miniconda3/etc/profile.d/conda.sh && \
-conda activate base && \
-export CONDA_HOME=${WORKSPACE_DIR}/miniconda3 " >> ${SETUP_SCRIPT}
+touch "${SETUP_SCRIPT}"
 
 echo ". ${SETUP_SCRIPT}" >> ${HOME}/.bashrc
+echo "if [ -z \${CONDA_ENV} ]; then export CONDA_ENV=${CONDA_ENV}; fi" >> "${SETUP_SCRIPT}"
+
+if [ -n "${UV_VENV_DIR:-}" ]; then
+    bash ./.ci/uv/install.sh
+else
+    bash ./.ci/conda/install.sh
+fi
+
+. "${SETUP_SCRIPT}"
 
 export CONDA_ENV=pytorch
-
-. "${SETUP_SCRIPT}"
-
-python tools/python_utils.py --create-conda-env ${CONDA_ENV} && \
-echo "if [ -z \${CONDA_ENV} ]; then export CONDA_ENV=${CONDA_ENV}; fi" >> "${SETUP_SCRIPT}" && \
-echo "conda activate \${CONDA_ENV}" >> "${SETUP_SCRIPT}"
-
-. "${SETUP_SCRIPT}"
-
-python -m tools.cuda_utils --install-torch-deps
+python3 tools/python_utils.py --create-conda-env ${CONDA_ENV}
+if [ -n "${UV_VENV_DIR:-}" ]; then
+    echo ". ${UV_VENV_DIR}/\${CONDA_ENV}/bin/activate" >> "${SETUP_SCRIPT}"
+    . "${SETUP_SCRIPT}"
+else
+    echo "conda activate \${CONDA_ENV}" >> "${SETUP_SCRIPT}"
+    . "${SETUP_SCRIPT}"
+    python -m tools.cuda_utils --install-torch-deps
+fi
 
 if [ -n "${USE_CUDA:-}" ]; then
     python -m tools.cuda_utils --install-torch-nightly --cuda
@@ -60,8 +55,11 @@ if [ -n "${USE_CUDA:-}" ]; then
 
     if [ -e ${NVIDIA_LIB_PATH} ]; then
         cd ${NVIDIA_LIB_PATH}
-        ln -s libcublas.so.* libcublas.so && ln -s libcublasLt.so.* libcublasLt.so &&  ln -s libnvblas.so.* libnvblas.so && \
-        echo "export LD_LIBRARY_PATH=${NVIDIA_LIB_PATH}\${LD_LIBRARY_PATH:+:\${LD_LIBRARY_PATH}}\n" >> /workspace/setup_instance.sh
+        ln -s libcublas.so.* libcublas.so && ln -s libcublasLt.so.* libcublasLt.so &&  ln -s libnvblas.so.* libnvblas.so
+        
+        cat <<EOF >> "${SETUP_SCRIPT}"
+export LD_LIBRARY_PATH="${NVIDIA_LIB_PATH}\${LD_LIBRARY_PATH:+:\${LD_LIBRARY_PATH}}"
+EOF
         cd -
     fi
 elif [ -n "${USE_HIP:-}" ]; then
