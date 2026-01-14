@@ -17,6 +17,12 @@ on:
         type: string
         description: |
           Benchmark name
+      venv_name:
+        required: True
+        default: "triton-main"
+        type: string
+        description: |
+          Name of the virtual environment to use for the benchmark
       side_a_triton:
         type: string
         required: False
@@ -52,8 +58,8 @@ jobs:
     env:
       SETUP_SCRIPT: "/workspace/setup_instance.sh"
       RUNNER_TYPE: "gcp-h100-runner"
-      JOB_NAME: tritonbench-h100-benchmark-${{ inputs.test_type }}-${{ inputs.benchmark_name }}
-      TRITONBENCH_SIDE_A_ENV: "triton-main"
+      JOB_NAME: tritonbench-h100-benchmark-${{ inputs.venv_name }}-${{ inputs.test_type }}-${{ inputs.benchmark_name }}
+      TRITONBENCH_SIDE_A_ENV: ${{ inputs.venv_name }}
       TRITONBENCH_SCRIBE_GRAPHQL_ACCESS_TOKEN: ${{ secrets.TRITONBENCH_SCRIBE_GRAPHQL_ACCESS_TOKEN }}
       AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
       AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
@@ -128,10 +134,12 @@ jobs:
           fi
       - name: Setup uploader dependencies
         run: |
-          sudo apt-get install -y python3-pip
+          . "${SETUP_SCRIPT}"
+          uv pip install pip
       - name: Upload result to ClickHouse
         uses: pytorch/test-infra/.github/actions/upload-benchmark-results@main
         with:
+          venv: ${{ env.SETUP_SCRIPT }}
           benchmark-results-dir: benchmark-output/clickhouse-results
           dry-run: false
           schema-version: v3
