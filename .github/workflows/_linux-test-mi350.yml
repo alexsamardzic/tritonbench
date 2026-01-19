@@ -19,6 +19,7 @@ jobs:
       UV_VENV_DIR: "/workspace/uv_venvs"
       SETUP_SCRIPT: "/workspace/setup_instance.sh"
       CONDA_ENV: ${{ inputs.conda_env }}
+      TRITON_HIP_USE_ASYNC_COPY: "0"
     steps:
       - name: Checkout Tritonbench
         uses: actions/checkout@v3
@@ -27,7 +28,12 @@ jobs:
       - name: Install Tritonbench env
         run: |
           set -eux
-          bash ./.ci/tritonbench/setup-env.sh --hip
+          if [[ "${CONDA_ENV}" == "meta-triton" ]]; then
+            CMD_SUFFIX=" --meta-triton"
+          elif [[ "${CONDA_ENV}" == "triton-main" ]]; then
+            CMD_SUFFIX=" --triton-main"
+          fi
+          bash ./.ci/tritonbench/setup-env.sh --hip ${CMD_SUFFIX}
       - name: Test Tritonbench
         run: |
           set -eux
