@@ -24,9 +24,9 @@ import subprocess
 
 from pathlib import Path
 # the default regression threshold is 10%
-REGRESSION_THRESHOLD = float(os.environ.get("REGRESSION_THRESHOLD", 0.1))
+REGRESSION_THRESHOLD = float(os.environ.get("REGRESSION_THRESHOLD", 10.0)) / 100.0
 # functional or performance regression
-FUNCTIONAL = bool(os.environ.get("FUNCTIONAL", False))
+FUNCTIONAL = bool(int(os.environ["FUNCTIONAL"]))
 # repro command line
 REPRO_CMDLINE = os.environ.get("REPRO_CMDLINE", None)
 # baseline log file
@@ -44,8 +44,8 @@ def get_current_value(stdout_lines) -> float:
     return float(last_line.strip())
 
 if __name__ == "__main__":
-    if "--simple-output" not in REPRO_CMDLINE:
-        print("Regression detector requires --simple-output as it only reads the last line in the benchmark output.")
+    if not FUNCTIONAL and "--simple-output" not in REPRO_CMDLINE:
+        print("Performance tests require --simple-output as we will only read the last line in the benchmark output.")
         exit(1)
     assert REPRO_CMDLINE is not None, "REPRO_CMDLINE is not set."
     cmdline = REPRO_CMDLINE.split()
@@ -57,11 +57,10 @@ if __name__ == "__main__":
         except subprocess.CalledProcessError as e:
             print(f"cmd line {cmdline} failed: {e}")
             exit(e.returncode)
+        exit(0)
 
-    if os.path.exists(BASELINE_LOG):
-        has_baseline = True
-    else:
-        has_baseline = False
+    assert BASELINE_LOG and os.path.exists(BASELINE_LOG), f"BASELINE_LOG is not set or to a non-exist location: {BASELINE_LOG}."
+    baseline_signal = get_baseline(BASELINE_LOG)
     p = subprocess.Popen(cmdline, cwd=REPO_DIR, stdout=subprocess.PIPE, stderr=None)
     assert p.stdout is not None
     stdout_lines = []
@@ -70,22 +69,21 @@ if __name__ == "__main__":
         print(decoded_line)
         stdout_lines.append(decoded_line)
     rc = p.wait()
-    if not has_baseline:
-        Path(BASELINE_LOG).touch()
-        with open(BASELINE_LOG, "w") as f:
-            f.write("\n".join(stdout_lines) + "\n")
-        exit(rc)
     # if subprocess failed, exit with the return code
     if not rc == 0:
         exit(rc)
-    # otherwise, check for the perf regression
-    baseline = get_baseline(BASELINE_LOG)
+    # otherwise, check for the perf regression or accuracy regression
     current_value = get_current_value(stdout_lines)
-    smaller_value = min(baseline, current_value)
-    larger_value = max(baseline, current_value)
+    if current_value == 0 and "accuracy" in REPRO_CMDLINE:
+        print("Accuracy test failed, exit with 1.")
+        exit(1)
+    smaller_value = min(baseline_signal, current_value)
+    larger_value = max(baseline_signal, current_value)
+    assert smaller_value > 0, "smaller_value should be positive, got zero."
+    ratio = (larger_value - smaller_value) / smaller_value * 100
     if larger_value > smaller_value * (1 + REGRESSION_THRESHOLD):
-        print(f"Regression detected: current value {current_value} regresses over the baseline {baseline} by {REGRESSION_THRESHOLD*100}%)")
+        print(f"Regression detected: current value {current_value}, {larger_value} / {smaller_value} - 1 == {ratio}% , threshold {REGRESSION_THRESHOLD*100}%)")
         exit(1)
     else:
-        print(f"No regression detected: current value {current_value} regresses over the baseline {baseline} by {REGRESSION_THRESHOLD*100}%)")
+        print(f"No regression detected: current value {current_value}, {larger_value} / {smaller_value} - 1 == {ratio}%, threshold {REGRESSION_THRESHOLD*100}%)")
         exit(0)

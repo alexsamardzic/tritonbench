@@ -3,11 +3,18 @@ on:
   workflow_dispatch:
     inputs:
       conda_env:
+        type: choice
         default: 'triton-main'
-        choices:
+        options:
           - 'triton-main'
           - 'meta-triton'
         description: 'Conda env to bisect'
+      bisect_type:
+        type: choice
+        default: 'performance'
+        options:
+          - 'performance'
+          - 'functional'
       repro_cmdline:
         required: True
         type: string
@@ -17,23 +24,17 @@ on:
         required: True
         type: string
         description: |
-          The known good commit (no regression)
+          Last good commit (no regression)
       bad_commit:
         required: True
         type: string
         description: |
-          The known bad commit (has regression)
-      functional:
-        required: False
-        type: boolean
-        description: |
-          Whether the regression is functional or performance
+          First bad commit (has regression)
       regression_threshold:
-        required: False
         type: number
-        default: 0.1
+        default: 10
         description: |
-          The regression threshold to bisect on, default to 0.1 (10%)
+          Performance regression threshold in %
 
 
 jobs:
@@ -44,7 +45,7 @@ jobs:
       repro_cmdline: ${{ inputs.repro_cmdline }}
       good_commit: ${{ inputs.good_commit }}
       bad_commit: ${{ inputs.bad_commit }}
-      functional: ${{ inputs.functional }}
+      functional: ${{ inputs.bisect_type == 'functional' }}
       regression_threshold: ${{ inputs.regression_threshold }}
 
 
