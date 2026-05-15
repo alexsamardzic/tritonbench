@@ -475,6 +475,51 @@ def _print_multi_device_summary(
     print(f"{'=' * 60}\n")
 
 
+def _add_mode_suffix(filepath: str, mode: str) -> str:
+    """Insert a mode suffix before the file extension.
+
+    E.g. 'result.csv' + 'bwd' -> 'result_bwd.csv'
+    """
+    base, ext = os.path.splitext(filepath)
+    return f"{base}_{mode}{ext}"
+
+
+def _run_in_task_single_mode(
+    op: str,
+    mode: str,
+    output: Optional[str] = None,
+    output_json: Optional[str] = None,
+    output_dir: Optional[str] = None,
+) -> None:
+    """Run a single op+mode in an isolated subprocess.
+
+    When the user passes --mode fwd,bwd, sys.argv still contains the
+    original multi-mode value.  We replace it with the single mode so
+    the child process only runs one mode.  Output paths are also
+    replaced to avoid different modes overwriting each other.
+    """
+    saved_argv = sys.argv[:]
+    try:
+        sys.argv = remove_cmd_parameter(copy.deepcopy(sys.argv), "--mode")
+        add_cmd_parameter(sys.argv, "--mode", mode)
+        # Also strip legacy boolean mode flags so they don't override --mode
+        for legacy_flag in ("--bwd", "--fwd-bwd", "--fwd-no-grad"):
+            sys.argv = remove_cmd_parameter(sys.argv, legacy_flag)
+        # Replace output paths so each mode writes to a distinct file
+        if output is not None:
+            sys.argv = remove_cmd_parameter(sys.argv, "--output")
+            add_cmd_parameter(sys.argv, "--output", output)
+        if output_json is not None:
+            sys.argv = remove_cmd_parameter(sys.argv, "--output-json")
+            add_cmd_parameter(sys.argv, "--output-json", output_json)
+        if output_dir is not None:
+            sys.argv = remove_cmd_parameter(sys.argv, "--output-dir")
+            add_cmd_parameter(sys.argv, "--output-dir", output_dir)
+        run_in_task(op)
+    finally:
+        sys.argv = saved_argv
+
+
 def tritonbench_run(args: Optional[List[str]] = None):
     if args == None or args == []:
         args = sys.argv[1:]
@@ -523,6 +568,8 @@ def tritonbench_run(args: Optional[List[str]] = None):
         )
         return
 
+    modes = args.mode.split(",")
+
     # Check if A/B testing mode is enabled
     if args.side_a is not None and args.side_b is not None:
         # A/B testing mode - only support single operator
@@ -538,33 +585,60 @@ def tritonbench_run(args: Optional[List[str]] = None):
 
         lockdown_enabled = args.gpu_lockdown or (args.gpu_lock_clock_mhz is not None)
         with gpu_lockdown(lockdown_enabled, args.gpu_lock_clock_mhz):
-            try:
-                result_a, result_b = run_ab_test(args, extra_args, _run)
+            for mode in modes:
+                args.mode = mode
+                try:
+                    result_a, result_b = run_ab_test(args, extra_args, _run)
 
-                from tritonbench.utils.ab_test import parse_ab_config
+                    from tritonbench.utils.ab_test import parse_ab_config
 
-                config_a_args = parse_ab_config(args.side_a)
-                config_b_args = parse_ab_config(args.side_b)
-                compare_ab_results(result_a, result_b, config_a_args, config_b_args)
+                    config_a_args = parse_ab_config(args.side_a)
+                    config_b_args = parse_ab_config(args.side_b)
+                    compare_ab_results(result_a, result_b, config_a_args, config_b_args)
 
-            except Exception as e:
-                print(f"A/B test failed: {e}")
-                if not args.bypass_fail:
-                    raise
+                except Exception as e:
+                    print(f"A/B test failed: {e}")
+                    if not args.bypass_fail:
+                        raise
     else:
         # Normal mode
         # Force isolation in subprocess if testing more than one op.
         if len(ops) >= 2:
             args.isolate = True
 
+        multi_mode = len(modes) > 1
+        orig_output = args.output
+        orig_output_json = args.output_json
+        orig_output_dir = args.output_dir
+
         lockdown_enabled = args.gpu_lockdown or (args.gpu_lock_clock_mhz is not None)
         with gpu_lockdown(lockdown_enabled, args.gpu_lock_clock_mhz):
             for op in ops:
                 args.op = op
-                if args.isolate:
-                    run_in_task(op)
-                else:
-                    _run(args, extra_args)
+                for mode in modes:
+                    args.mode = mode
+                    if multi_mode:
+                        args.output = (
+                            _add_mode_suffix(orig_output, mode) if orig_output else None
+                        )
+                        args.output_json = (
+                            _add_mode_suffix(orig_output_json, mode)
+                            if orig_output_json
+                            else None
+                        )
+                        if orig_output_dir:
+                            args.output_dir = os.path.join(orig_output_dir, mode)
+                            os.makedirs(args.output_dir, exist_ok=True)
+                    if args.isolate:
+                        _run_in_task_single_mode(
+                            op,
+                            mode,
+                            output=args.output,
+                            output_json=args.output_json,
+                            output_dir=args.output_dir,
+                        )
+                    else:
+                        _run(args, extra_args)
 
     tritonparse_parse(args.tritonparse)
 
