@@ -10,7 +10,7 @@ REPO_PATH = Path(os.path.abspath(__file__)).parent.parent.parent
 CURRENT_DIR = Path(os.path.abspath(__file__)).parent
 
 QUACK_REPO = "https://github.com/Dao-AILab/quack.git"
-QUACK_SHA = "12f11462f06f8c1d79ac2c3c04e308678c81253c"
+QUACK_SHA = "5e4d024e839bf851b820887c4c5b9656f206fa08"
 
 QUACK_INSTALL_PATH = REPO_PATH.joinpath(".install")
 BUILD_CONSTRAINTS_FILE = REPO_PATH.joinpath("build", "constraints.txt")
@@ -26,7 +26,15 @@ def install_quack():
     subprocess.check_call(git_clone_cmd, cwd=QUACK_INSTALL_PATH)
     git_checkout_cmd = ["git", "checkout", QUACK_SHA]
     subprocess.check_call(git_checkout_cmd, cwd=quack_path)
+    override_parameters = []
+    override_file = os.getenv("TRITONBENCH_UV_QUACK_OVERRIDE_FILE")
+    pip_cmd = get_pip_cmd()
+    if override_file and Path(override_file).exists() and pip_cmd[:2] == ["uv", "pip"]:
+        override_parameters = ["--overrides", override_file]
     install_quack_cmd = (
-        get_pip_cmd() + ["install", "-e", ".[dev]"] + constraints_parameters
+        pip_cmd
+        + ["install", "-e", ".[dev]"]
+        + override_parameters
+        + constraints_parameters
     )
     subprocess.check_call(install_quack_cmd, cwd=quack_path)

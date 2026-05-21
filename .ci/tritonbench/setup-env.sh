@@ -3,7 +3,7 @@
 set -xeuo pipefail
 
 usage() {
-    echo "Usage: $0 [--cuda|--hip] [--triton-main] [--meta-triton] [--no-build] [--test-nvidia-driver] [--triton-main-commit <hash-or-ref>] [--meta-triton-commit <hash-or-ref>]"
+    echo "Usage: $0 [--cuda|--hip] [--triton-main] [--meta-triton] [--custom-triton <triton-dir>] [--no-build] [--test-nvidia-driver] [--install-torch-wheel <wheel-url>] [--triton-main-commit <hash-or-ref>] [--meta-triton-commit <hash-or-ref>]"
     exit 1
 }
 
@@ -22,6 +22,22 @@ while [[ "$#" -gt 0 ]]; do
         --hip) USE_HIP="1"; ;;
         --triton-main) USE_TRITON_MAIN="1"; ;;
         --meta-triton) USE_META_TRITON="1"; ;;
+        --custom-triton)
+            if [ -z "${2:-}" ]; then
+                echo "ERROR: --custom-triton requires a value"
+                usage
+            fi
+            CUSTOM_TRITON_DIR="$2"
+            shift
+            ;;
+        --install-torch-wheel)
+            if [ -z "${2:-}" ]; then
+                echo "ERROR: --install-torch-wheel requires a value"
+                usage
+            fi
+            INSTALL_TORCH_WHEEL="$2"
+            shift
+            ;;
         --triton-main-commit)
             if [ -z "${2:-}" ]; then
                 echo "ERROR: --triton-main-commit requires a value"
@@ -79,7 +95,13 @@ python -m tools.cuda_utils --install-torch-deps
 bash .ci/tritonbench/install-pytorch-source.sh
 
 if [ -n "${USE_CUDA:-}" ]; then
-    python -m tools.cuda_utils --install-torch-nightly --cuda
+    TORCH_INSTALL_ARGS=(--cuda)
+    if [ -n "${INSTALL_TORCH_WHEEL:-}" ]; then
+        TORCH_INSTALL_ARGS+=(--install-torch-wheel "${INSTALL_TORCH_WHEEL}")
+    else
+        TORCH_INSTALL_ARGS+=(--install-torch-nightly)
+    fi
+    python -m tools.cuda_utils "${TORCH_INSTALL_ARGS[@]}"
 
     bash ./.ci/tritonbench/setup-nvidia-path.sh
 
@@ -89,18 +111,17 @@ if [ -n "${USE_CUDA:-}" ]; then
     fi
 
 elif [ -n "${USE_HIP:-}" ]; then
-    python -m tools.cuda_utils --install-torch-nightly --hip
+    TORCH_INSTALL_ARGS=(--hip)
+    if [ -n "${INSTALL_TORCH_WHEEL:-}" ]; then
+        TORCH_INSTALL_ARGS+=(--install-torch-wheel "${INSTALL_TORCH_WHEEL}")
+    else
+        TORCH_INSTALL_ARGS+=(--install-torch-nightly)
+    fi
+    python -m tools.cuda_utils "${TORCH_INSTALL_ARGS[@]}"
     bash ./.ci/tritonbench/setup-rocm-path.sh
 else
     echo "Unknown backend. Only CUDA and HIP are supported."
     exit 1
-fi
-
-bash .ci/tritonbench/install.sh
-
-if [ -n "${USE_CUDA:-}" ] && [ -n "${TEST_NVIDIA_DRIVER:-}" ]; then
-    sudo apt-get purge -y '^libnvidia-'
-    sudo apt-get purge -y '^nvidia-'
 fi
 
 COMMON_INSTALL_ARGS=()
@@ -113,6 +134,7 @@ if [ -n "${USE_TRITON_MAIN:-}" ]; then
     if [ -n "${TRITON_MAIN_COMMIT:-}" ]; then
         TRITON_MAIN_INSTALL_ARGS+=(--commit "${TRITON_MAIN_COMMIT}")
     fi
+    export CONDA_ENV="triton-main"
     bash ./.ci/triton/install-triton-main.sh "${TRITON_MAIN_INSTALL_ARGS[@]}"
 fi
 if [ -n "${USE_META_TRITON:-}" ]; then
@@ -120,7 +142,24 @@ if [ -n "${USE_META_TRITON:-}" ]; then
     if [ -n "${META_TRITON_COMMIT:-}" ]; then
         META_TRITON_INSTALL_ARGS+=(--commit "${META_TRITON_COMMIT}")
     fi
+    export CONDA_ENV="meta-triton"
     bash ./.ci/triton/install-meta-triton.sh "${META_TRITON_INSTALL_ARGS[@]}"
+fi
+if [ -n "${CUSTOM_TRITON_DIR:-}" ]; then
+    CUSTOM_TRITON_INSTALL_ARGS=("${COMMON_INSTALL_ARGS[@]}" --no-checkout --skip-conda-reset)
+    bash ./.ci/triton/install.sh --conda-env "${CONDA_ENV}" \
+        --side single --install-dir "${CUSTOM_TRITON_DIR}" \
+        "${CUSTOM_TRITON_INSTALL_ARGS[@]}"
+fi
+
+# switch to the new conda env
+. "${SETUP_SCRIPT}"
+
+bash .ci/tritonbench/install.sh
+
+if [ -n "${USE_CUDA:-}" ] && [ -n "${TEST_NVIDIA_DRIVER:-}" ]; then
+    sudo apt-get purge -y '^libnvidia-'
+    sudo apt-get purge -y '^nvidia-'
 fi
 
 cat "${SETUP_SCRIPT}"

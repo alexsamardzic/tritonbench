@@ -5,7 +5,7 @@ import shutil
 import subprocess
 from pathlib import Path
 
-from .torch_utils import install_pytorch_nightly
+from .torch_utils import install_pytorch_nightly, install_pytorch_wheel
 from .python_utils import get_pip_cmd, USE_UV
 
 # defines the default CUDA version to compile against
@@ -95,9 +95,17 @@ def setup_cuda_softlink(cuda_version: str):
 
 
 def install_torch_deps():
+    """Install pytorch dependencies. Need to run when install pytorch from a wheel."""
     # install torch dependencies
     torch_deps = [
         "packaging",
+        "typing_extensions",
+        "numpy",
+        "sympy",
+        "filelock",
+        "pyyaml",
+        "networkx",
+        "jinja2",
     ]
     cmd = get_pip_cmd() + ["install"] + torch_deps
     subprocess.check_call(cmd)
@@ -161,6 +169,12 @@ if __name__ == "__main__":
         "--install-torch-nightly", action="store_true", help="Install pytorch nightly"
     )
     parser.add_argument(
+        "--install-torch-wheel",
+        type=str,
+        default=None,
+        help="Install pytorch from a wheel URL",
+    )
+    parser.add_argument(
         "--check-torch-nightly-version",
         action="store_true",
         help="Validate pytorch nightly package consistency",
@@ -187,23 +201,32 @@ if __name__ == "__main__":
             toolkit_mapping = HIP_VERSION_MAP
     else:
         toolkit_mapping = CUDA_VERSION_MAP if args.cuda or IS_CUDA else HIP_VERSION_MAP
+    assert not (args.install_torch_nightly and args.install_torch_wheel), (
+        "Error: Can't install torch nightly from both the default index and a wheel URL in the same command."
+    )
+    assert not (
+        (args.install_torch_nightly or args.install_torch_wheel)
+        and args.check_torch_nightly_version
+    ), "Error: Can't install torch and check the nightly version in the same command."
+    torch_deps_installed = False
     if args.setup_cuda_softlink:
         assert IS_CUDA, "Error: CUDA is not available on this machine."
         setup_cuda_softlink(cuda_version=args.toolkit_version)
-    if args.install_torch_deps:
+    if args.install_torch_deps or args.install_torch_wheel:
         install_torch_deps()
+        torch_deps_installed = True
     if args.install_torch_build_deps:
         from .torch_utils import install_torch_build_deps
 
-        install_torch_deps()
+        if not torch_deps_installed:
+            install_torch_deps()
         install_torch_build_deps()
     if args.install_torch_nightly:
         toolkit_version = toolkit_mapping[args.toolkit_version]["pytorch_url"]
         install_pytorch_nightly(toolkit_version=toolkit_version, env=os.environ)
+    if args.install_torch_wheel:
+        install_pytorch_wheel(wheel_url=args.install_torch_wheel, env=os.environ)
     if args.check_torch_nightly_version:
         from .torch_utils import check_torch_nightly_version
 
-        assert not args.install_torch_nightly, (
-            "Error: Can't run install torch nightly and check version in the same command."
-        )
         check_torch_nightly_version(args.force_date)
