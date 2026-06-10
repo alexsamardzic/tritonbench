@@ -20,7 +20,17 @@ from tritonbench.utils.env_utils import (
 from tritonbench.utils.parser import get_parser
 from tritonbench.utils.run_utils import _env_check
 
-if is_fbcode():
+CUSTOM_SKIP_FILE_ENV = "TRITONBENCH_TEST_SKIP_FILE"
+
+if custom_skip_file := os.environ.get(CUSTOM_SKIP_FILE_ENV):
+    # Allow users to override the skip list with a custom yaml file.
+    if not os.path.isfile(custom_skip_file):
+        raise RuntimeError(
+            f"{CUSTOM_SKIP_FILE_ENV} is set to '{custom_skip_file}', "
+            "but the file does not exist."
+        )
+    SKIP_FILE = custom_skip_file
+elif is_fbcode():
     import importlib
 
     fbcode_skip_file_path = "fb/skip_tests.yaml"
@@ -44,7 +54,10 @@ TEST_OPERATORS = (
 )
 
 
-def _gen_test_operators(test_ops, skip_tests) -> set[str]:
+def _gen_test_operators(test_ops, skip_tests) -> tuple[set[str], dict[str, str]]:
+    # Map of operator -> comma-separated backends that should be skipped (via
+    # `--skip`) when the disabled_* condition matches the current environment.
+    skip_backends: dict[str, str] = {}
     # to save capacity, only run tests specific to b200 on b200
     if is_blackwell():
         test_ops = {
@@ -84,22 +97,35 @@ def _gen_test_operators(test_ops, skip_tests) -> set[str]:
                     if disabled_channels is None
                     else _env_check({"channels": disabled_channels}, "channels")
                 )
-                test_ops[skip_op]["disabled"] = test_ops[skip_op]["disabled"] or (
-                    disabled_device_match and disabled_channel_match
-                )
+                if disabled_device_match and disabled_channel_match:
+                    backends = skip_tests[skip_op].get("backends")
+                    if backends:
+                        # Only skip the specified backends (via `--skip`) instead
+                        # of disabling the entire operator.
+                        skip_backends[skip_op] = backends
+                    else:
+                        test_ops[skip_op]["disabled"] = True
         if (
-            test_ops[skip_op]["disabled"]
+            (test_ops[skip_op]["disabled"] or skip_op in skip_backends)
             and skip_tests[skip_op]
             and skip_tests[skip_op].get("report", False)
         ):
-            logger.warning(
-                "%s test is temporarily disabled and needs work to re-enable it.",
-                skip_op,
+            scope = (
+                f"backends ({skip_backends[skip_op]})"
+                if skip_op in skip_backends
+                else "test"
             )
-    return {test_op for test_op in test_ops if not test_ops[test_op]["disabled"]}
+            logger.warning(
+                "%s %s is temporarily disabled and needs work to re-enable it.",
+                skip_op,
+                scope,
+            )
+    enabled_ops = {test_op for test_op in test_ops if not test_ops[test_op]["disabled"]}
+    skip_backends = {op: skip_backends[op] for op in skip_backends if op in enabled_ops}
+    return enabled_ops, skip_backends
 
 
-TEST_OPERATORS = _gen_test_operators(TEST_OPERATORS, skip_tests)
+TEST_OPERATORS, SKIP_BACKENDS = _gen_test_operators(TEST_OPERATORS, skip_tests)
 
 
 def check_ci_output(op):
@@ -115,9 +141,9 @@ def check_ci_output(op):
     )
     # Make sure that all the ci_enabled impls are in the output
     logger.info(f"output impls: {output_impls}, ci_enabled impls: {ci_enabled_impls}")
-    assert set(output_impls) == set(ci_enabled_impls), (
-        f"output impls: {output_impls} != ci_enabled impls: {ci_enabled_impls}"
-    )
+    assert set(output_impls) == set(
+        ci_enabled_impls
+    ), f"output impls: {output_impls} != ci_enabled impls: {ci_enabled_impls}"
 
 
 class MaybeTestOperatorTask:
@@ -186,6 +212,9 @@ def make_test(operator):
             "1",
             "--test-only",
         ]
+        # Skip specific backends when the disabled_* condition matches.
+        if operator in SKIP_BACKENDS:
+            args.extend(["--skip", SKIP_BACKENDS[operator]])
         in_task = not is_fbcode()
         _run_one_operator(op=operator, args=args, in_task=in_task)
 
